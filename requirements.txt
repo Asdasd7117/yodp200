@@ -1,6 +1,5 @@
+yt_dlp
+openai-whisper
 Flask
-pytube
-moviepy
-SpeechRecognition
 pydub
-googletrans==4.0.0-rc1
+requests
