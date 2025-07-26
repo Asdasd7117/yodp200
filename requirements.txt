@@ -1,5 +1,4 @@
-yt_dlp
-openai-whisper
 Flask
-pydub
-requests
+yt_dlp
+faster-whisper
+googletrans==4.0.0-rc1
