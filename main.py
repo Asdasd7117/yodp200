@@ -1,68 +1,51 @@
 import os
-import tempfile
 import yt_dlp
-from faster_whisper import WhisperModel
+from pydub import AudioSegment
+import speech_recognition as sr
 from googletrans import Translator
-from flask import Flask, request, jsonify
 
-app = Flask(__name__)
-translator = Translator()
-
-model_size = "large-v3"
-model = WhisperModel(model_size, compute_type="int8", cpu_threads=4)
-
+# 1. تحميل الفيديو وتحويله لصوت
 def download_audio(url):
-    temp_dir = tempfile.mkdtemp()
-    audio_path = os.path.join(temp_dir, "audio.mp3")
-
     ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": audio_path,
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
+        'format': 'bestaudio/best',
+        'outtmpl': 'downloaded_audio.%(ext)s',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
         }],
-        "quiet": True,
     }
-
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
+    return 'downloaded_audio.mp3'
 
-    return audio_path
+# 2. تحويل الصوت إلى نص
+def transcribe_audio(audio_file):
+    recognizer = sr.Recognizer()
+    audio = AudioSegment.from_file(audio_file)
+    audio.export("converted.wav", format="wav")
 
-def transcribe_and_translate(audio_path):
-    segments, _ = model.transcribe(audio_path, language="tr", beam_size=5)
-    
-    full_text = ""
-    for segment in segments:
-        full_text += segment.text + " "
-
-    translated = translator.translate(full_text, src='tr', dest='ar')
-    return translated.text
-
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        data = request.get_json()
-        if not data or "url" not in data:
-            return jsonify({"error": "يرجى إرسال رابط الفيديو"}), 400
-
+    with sr.AudioFile("converted.wav") as source:
+        audio_data = recognizer.record(source)
         try:
-            url = data["url"]
-            audio_path = download_audio(url)
-            translation = transcribe_and_translate(audio_path)
-            os.remove(audio_path)
-            return jsonify({"translation": translation})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            text = recognizer.recognize_google(audio_data)
+            return text
+        except sr.UnknownValueError:
+            return "لم يتم التعرف على الكلام"
+        except sr.RequestError:
+            return "حدث خطأ في الاتصال بـ Google"
 
-    return '''
-        <form method="post" action="/" enctype="application/json">
-            <input type="text" name="url" placeholder="ضع رابط الفيديو هنا">
-            <input type="submit" value="ترجم">
-        </form>
-    '''
+# 3. الترجمة إلى العربية
+def translate_text(text):
+    translator = Translator()
+    result = translator.translate(text, dest='ar')
+    return result.text
 
+# مثال للاستخدام:
 if __name__ == "__main__":
-    app.run(debug=True)
+    url = input("أدخل رابط الفيديو من يوتيوب: ")
+    audio_file = download_audio(url)
+    print("تم التحميل، جاري التحويل إلى نص...")
+    transcribed = transcribe_audio(audio_file)
+    print("\nالنص المستخرج:\n", transcribed)
+    print("\nالترجمة إلى العربية:\n", translate_text(transcribed))
