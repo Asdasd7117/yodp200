@@ -1,46 +1,68 @@
-from pytube import YouTube
-import speech_recognition as sr
-from pydub import AudioSegment
-from googletrans import Translator
 import os
-import uuid
-import subprocess
+import tempfile
+import yt_dlp
+from faster_whisper import WhisperModel
+from googletrans import Translator
+from flask import Flask, request, jsonify
 
-def download_audio(youtube_url):
-    yt = YouTube(youtube_url)
-    stream = yt.streams.filter(only_audio=True).first()
-    filename = f"{uuid.uuid4()}.mp4"
-    stream.download(filename=filename)
-    return filename
+app = Flask(__name__)
+translator = Translator()
 
-def extract_audio(mp4_file):
-    wav_file = mp4_file.replace(".mp4", ".wav")
-    command = ["ffmpeg", "-i", mp4_file, wav_file]
-    subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return wav_file
+model_size = "large-v3"
+model = WhisperModel(model_size, compute_type="int8", cpu_threads=4)
 
-def split_audio(wav_file, chunk_length_ms=30000):  # 30 ثانية
-    audio = AudioSegment.from_wav(wav_file)
-    chunks = [audio[i:i+chunk_length_ms] for i in range(0, len(audio), chunk_length_ms)]
-    return chunks
+def download_audio(url):
+    temp_dir = tempfile.mkdtemp()
+    audio_path = os.path.join(temp_dir, "audio.mp3")
 
-def transcribe_and_translate(wav_file):
-    recognizer = sr.Recognizer()
-    chunks = split_audio(wav_file)
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": audio_path,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
+        "quiet": True,
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
+
+    return audio_path
+
+def transcribe_and_translate(audio_path):
+    segments, _ = model.transcribe(audio_path, language="tr", beam_size=5)
+    
     full_text = ""
-    translator = Translator()
+    for segment in segments:
+        full_text += segment.text + " "
 
-    for i, chunk in enumerate(chunks):
-        chunk_file = f"chunk_{i}.wav"
-        chunk.export(chunk_file, format="wav")
-        with sr.AudioFile(chunk_file) as source:
-            audio_data = recognizer.record(source)
-            try:
-                text_tr = recognizer.recognize_google(audio_data, language="tr-TR")
-                translated = translator.translate(text_tr, src='tr', dest='ar').text
-                full_text += f"\n---\n{translated}\n"
-            except Exception as e:
-                full_text += f"\n[خطأ في المقطع {i}]: {str(e)}\n"
-        os.remove(chunk_file)
+    translated = translator.translate(full_text, src='tr', dest='ar')
+    return translated.text
 
-    return full_text
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if request.method == "POST":
+        data = request.get_json()
+        if not data or "url" not in data:
+            return jsonify({"error": "يرجى إرسال رابط الفيديو"}), 400
+
+        try:
+            url = data["url"]
+            audio_path = download_audio(url)
+            translation = transcribe_and_translate(audio_path)
+            os.remove(audio_path)
+            return jsonify({"translation": translation})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    return '''
+        <form method="post" action="/" enctype="application/json">
+            <input type="text" name="url" placeholder="ضع رابط الفيديو هنا">
+            <input type="submit" value="ترجم">
+        </form>
+    '''
+
+if __name__ == "__main__":
+    app.run(debug=True)
