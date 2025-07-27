@@ -1,5 +1,5 @@
-flask
+Flask
+openai
 yt-dlp
-deep-translator
-openai-whisper
-ffmpeg-python
+deep_translator
+requests
