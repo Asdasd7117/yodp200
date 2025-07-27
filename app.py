@@ -1,17 +1,17 @@
 from flask import Flask, request, render_template_string
 import os
 import uuid
-import whisper
+import requests
 from yt_dlp import YoutubeDL
 from deep_translator import GoogleTranslator
+import openai
 import logging
 
 app = Flask(__name__)
 
-# تحميل نموذج Whisper
-model = whisper.load_model("base")  # استخدم "small" أو "medium" إذا كانت الموارد متوفرة
+# مفتاح API الخاص بـ OpenAI
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# إعداد السجلات
 logging.basicConfig(level=logging.INFO)
 
 # HTML للواجهة
@@ -70,11 +70,12 @@ def download_audio(url):
         logging.error(f"[تنزيل] خطأ: {e}")
         return None
 
-# تحويل الصوت إلى نص باستخدام Whisper
+# تحويل الصوت إلى نص باستخدام OpenAI Whisper API
 def transcribe_audio(filename):
     try:
-        result = model.transcribe(filename)
-        return result['text']
+        with open(filename, "rb") as audio_file:
+            result = openai.Audio.transcribe("whisper-1", audio_file)
+            return result.get("text", "")
     except Exception as e:
         logging.error(f"[تحويل نصي] خطأ: {e}")
         return "حدث خطأ أثناء تحويل الصوت إلى نص"
