@@ -1,0 +1,20 @@
+{
+  "name": "youtube-translator",
+  "version": "1.0.0",
+  "description": "A Node.js app to translate YouTube video audio to Arabic",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "ytdl-core": "^4.11.0",
+    "axios": "^1.0.0",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "fluent-ffmpeg": "^2.1.2",
+    "openai": "^4.0.0",
+    "ws": "^8.0.0"
+  },
+  "author": "Your Name",
+  "license": "MIT"
+}
