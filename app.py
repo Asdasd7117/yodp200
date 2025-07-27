@@ -20,8 +20,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # استخراج معرف الفيديو من الرابط
 def get_video_id(url):
-    video_id_match = re.search(r'(?:v=|\/)([0-9A-Za-z_-]{11})(?:\?|&|$)',
-                              url)
+    video_id_match = re.search(r'(?:v=|\/)([0-9A-Za-z_-]{11})(?:\?|&|$)', url)
     return video_id_match.group(1) if video_id_match else None
 
 # HTML مع إضافة فيديو مضمّن
@@ -102,6 +101,8 @@ def download_audio(url):
         start_time = time.time()
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
+        if time.time() - start_time > 300:  # إذا تجاوز 5 دقائق
+            raise TimeoutError("تجاوز وقت التحميل الاقصى (5 دقائق)")
         logging.info(f"[تحميل الصوت] اكتمل في {time.time() - start_time:.2f} ثانية")
         return filename
     except Exception as e:
@@ -112,7 +113,9 @@ def transcribe_audio(filename):
     try:
         with open(filename, "rb") as audio_file:
             start_time = time.time()
-            result = openai.Audio.transcribe("whisper-1", audio_file, language="tr")  # افتراض اللغة التركية
+            result = openai.Audio.transcribe("whisper-1", audio_file, language="tr")
+            if time.time() - start_time > 300:  # إذا تجاوز 5 دقائق
+                raise TimeoutError("تجاوز وقت التحويل الاقصى (5 دقائق)")
             logging.info(f"[تحويل نصي] اكتمل في {time.time() - start_time:.2f} ثانية")
             return result.get("text", "")
     except Exception as e:
@@ -125,6 +128,8 @@ def translate_text(text, target='ar'):
             return ""
         start_time = time.time()
         translated = GoogleTranslator(source='auto', target=target).translate(text)
+        if time.time() - start_time > 300:  # إذا تجاوز 5 دقائق
+            raise TimeoutError("تجاوز وقت الترجمة الاقصى (5 دقائق)")
         logging.info(f"[ترجمة] اكتمل في {time.time() - start_time:.2f} ثانية")
         return translated
     except Exception as e:
@@ -158,14 +163,16 @@ def index():
                         if original_text:
                             translated_text = translate_text(original_text, target_lang)
                         else:
-                            error = "فشل تحويل الصوت إلى نص (قد يكون الفيديو طويلاً أو مشكلة في الاتصال)"
+                            error = "فشل تحويل الصوت إلى نص"
                     finally:
                         if os.path.exists(filename):
                             os.remove(filename)
                 else:
                     error = "فشل تحميل الفيديو (تأكد من ملف التعريف أو جرب رابطًا أقصر)"
 
-                loading = ""  # إزالة رسالة التحميل بعد الانتهاء
+                if time.time() - request.start_time > 360:  # إذا تجاوز 6 دقائق
+                    error = "الطلب استغرق وقتًا طويلاً جدًا (أكثر من 6 دقائق)، جرب مرة أخرى"
+                loading = ""
 
     return render_template_string(HTML, original_text=original_text, translated_text=translated_text, error=error, loading=loading, video_id=video_id)
 
