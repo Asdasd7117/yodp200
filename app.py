@@ -5,6 +5,7 @@ from yt_dlp import YoutubeDL
 from deep_translator import GoogleTranslator
 import openai
 import logging
+import time
 
 app = Flask(__name__)
 
@@ -16,7 +17,7 @@ if not openai.api_key:
 # إعداد السجلات
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# HTML مع إضافة خيار لتحديد اللغة
+# HTML مع إضافة خيار لتحديد اللغة وإظهار حالة التحميل
 HTML = """
 <!DOCTYPE html>
 <html lang="ar">
@@ -30,6 +31,7 @@ input[type=text], select { width: 100%; padding: 8px; margin-bottom: 10px; }
 input[type=submit] { padding: 10px 20px; font-size: 16px; cursor: pointer; }
 .result { background: #f0f0f0; padding: 1em; margin-top: 1em; border-radius: 6px; }
 .error { color: red; }
+.loading { color: blue; font-style: italic; }
 </style>
 </head>
 <body>
@@ -55,6 +57,9 @@ input[type=submit] { padding: 10px 20px; font-size: 16px; cursor: pointer; }
 {% if error %}
 <div class="error">{{ error }}</div>
 {% endif %}
+{% if loading %}
+<div class="loading">{{ loading }}</div>
+{% endif %}
 </body>
 </html>
 """
@@ -73,13 +78,17 @@ def download_audio(url):
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-            'cookiefile': cookie_file if cookie_file and os.path.exists(cookie_file) else None,  # إضافة ملف التعريف إذا وجد
-            'retries': 3,  # إعادة المحاولة 3 مرات في حالة الفشل
+            'cookiefile': cookie_file if cookie_file and os.path.exists(cookie_file) else None,
+            'retries': 3,
             'fragment_retries': 3,
-            'http_headers': {'User-Agent': 'Mozilla/5.0'},  # تحسين التوافق
+            'http_headers': {'User-Agent': 'Mozilla/5.0'},
+            'socket_timeout': 10,  # حد زمني 10 ثوانٍ
+            'download_archive': 'downloaded_videos.txt',  # لتجنب إعادة التحميل
         }
+        start_time = time.time()
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
+        logging.info(f"[تحميل الصوت] اكتمل في {time.time() - start_time:.2f} ثانية")
         return filename
     except Exception as e:
         logging.error(f"[تحميل الصوت] خطأ: {e}")
@@ -88,7 +97,9 @@ def download_audio(url):
 def transcribe_audio(filename):
     try:
         with open(filename, "rb") as audio_file:
+            start_time = time.time()
             result = openai.Audio.transcribe("whisper-1", audio_file)
+            logging.info(f"[تحويل نصي] اكتمل في {time.time() - start_time:.2f} ثانية")
             return result.get("text", "")
     except Exception as e:
         logging.error(f"[تحويل نصي] خطأ: {e}")
@@ -98,7 +109,10 @@ def translate_text(text, target='ar'):
     try:
         if not text:
             return ""
-        return GoogleTranslator(source='auto', target=target).translate(text)
+        start_time = time.time()
+        translated = GoogleTranslator(source='auto', target=target).translate(text)
+        logging.info(f"[ترجمة] اكتمل في {time.time() - start_time:.2f} ثانية")
+        return translated
     except Exception as e:
         logging.error(f"[ترجمة] خطأ: {e}")
         return None
@@ -108,6 +122,7 @@ def index():
     original_text = ""
     translated_text = ""
     error = ""
+    loading = ""
 
     if request.method == "POST":
         url = request.form.get("url")
@@ -116,6 +131,7 @@ def index():
         if not url.startswith("http"):
             error = "رابط غير صالح"
         else:
+            loading = "جارٍ معالجة الطلب، قد يستغرق ذلك بضع ثوانٍ..."
             filename = download_audio(url)
             if filename:
                 try:
@@ -123,14 +139,16 @@ def index():
                     if original_text:
                         translated_text = translate_text(original_text, target_lang)
                     else:
-                        error = "فشل تحويل الصوت إلى نص"
+                        error = "فشل تحويل الصوت إلى نص (قد يكون الفيديو طويلاً أو مشكلة في الاتصال)"
                 finally:
                     if os.path.exists(filename):
                         os.remove(filename)
             else:
-                error = "فشل تحميل الفيديو (تأكد من ملف التعريف إذا كان الفيديو محميًا)"
+                error = "فشل تحميل الفيديو (تأكد من ملف التعريف أو جرب رابطًا أقصر)"
 
-    return render_template_string(HTML, original_text=original_text, translated_text=translated_text, error=error)
+            loading = ""  # إزالة رسالة التحميل بعد الانتهاء
+
+    return render_template_string(HTML, original_text=original_text, translated_text=translated_text, error=error, loading=loading)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
