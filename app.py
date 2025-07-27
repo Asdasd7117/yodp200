@@ -2,7 +2,7 @@ from flask import Flask, request, render_template_string
 import yt_dlp
 from pydub import AudioSegment
 import speech_recognition as sr
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 import os
 
 app = Flask(__name__)
@@ -38,10 +38,12 @@ def transcribe_audio(audio_file):
         except sr.RequestError:
             return "حدث خطأ في الاتصال بـ Google"
 
-def translate_text(text):
-    translator = Translator()
-    result = translator.translate(text, dest='ar')
-    return result.text
+def translate_text(text, lang='ar'):
+    try:
+        translated = GoogleTranslator(source='auto', target=lang).translate(text)
+        return translated
+    except Exception as e:
+        return f"خطأ أثناء الترجمة: {str(e)}"
 
 HTML = """
 <!DOCTYPE html>
@@ -88,7 +90,6 @@ def index():
                 original_text = transcribe_audio(audio_file)
                 translated_text = translate_text(original_text)
             finally:
-                # تنظيف الملفات المؤقتة
                 if os.path.exists("downloaded_audio.mp3"):
                     os.remove("downloaded_audio.mp3")
                 if os.path.exists("converted.wav"):
