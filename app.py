@@ -7,45 +7,14 @@ from deep_translator import GoogleTranslator
 import logging
 
 app = Flask(__name__)
-model = whisper.load_model("base")  # أو "small" أو "medium" أو "large"
 
+# تحميل نموذج Whisper
+model = whisper.load_model("base")  # استخدم "small" أو "medium" إذا كانت الموارد متوفرة
+
+# إعداد السجلات
 logging.basicConfig(level=logging.INFO)
 
-def download_audio(url):
-    try:
-        filename = f"audio_{uuid.uuid4()}.mp3"
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': filename,
-            'quiet': True,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-        }
-        with YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        return filename
-    except Exception as e:
-        logging.error(f"Download error: {e}")
-        return None
-
-def transcribe_audio(filename):
-    try:
-        result = model.transcribe(filename)
-        return result['text']
-    except Exception as e:
-        logging.error(f"Transcription error: {e}")
-        return "حدث خطأ أثناء تحويل الصوت إلى نص"
-
-def translate_text(text, target='ar'):
-    try:
-        return GoogleTranslator(source='auto', target=target).translate(text)
-    except Exception as e:
-        logging.error(f"Translation error: {e}")
-        return "حدث خطأ أثناء الترجمة"
-
+# HTML للواجهة
 HTML = """
 <!DOCTYPE html>
 <html lang="ar">
@@ -79,6 +48,46 @@ HTML = """
 </html>
 """
 
+# تحميل الصوت من يوتيوب
+def download_audio(url):
+    try:
+        filename = f"audio_{uuid.uuid4()}.mp3"
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': filename,
+            'quiet': True,
+            'no_warnings': True,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+        }
+        with YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        return filename
+    except Exception as e:
+        logging.error(f"[تنزيل] خطأ: {e}")
+        return None
+
+# تحويل الصوت إلى نص باستخدام Whisper
+def transcribe_audio(filename):
+    try:
+        result = model.transcribe(filename)
+        return result['text']
+    except Exception as e:
+        logging.error(f"[تحويل نصي] خطأ: {e}")
+        return "حدث خطأ أثناء تحويل الصوت إلى نص"
+
+# ترجمة النص
+def translate_text(text, target='ar'):
+    try:
+        return GoogleTranslator(source='auto', target=target).translate(text)
+    except Exception as e:
+        logging.error(f"[ترجمة] خطأ: {e}")
+        return "حدث خطأ أثناء الترجمة"
+
+# المسار الرئيسي
 @app.route("/", methods=["GET", "POST"])
 def index():
     original_text = ""
@@ -86,17 +95,25 @@ def index():
 
     if request.method == "POST":
         url = request.form.get("url")
+        if not url.startswith("http"):
+            return render_template_string(HTML, original_text="رابط غير صالح", translated_text="")
+
         filename = download_audio(url)
 
         if filename:
-            original_text = transcribe_audio(filename)
-            translated_text = translate_text(original_text)
-            os.remove(filename)
+            try:
+                original_text = transcribe_audio(filename)
+                translated_text = translate_text(original_text)
+            finally:
+                if os.path.exists(filename):
+                    os.remove(filename)
         else:
             original_text = "فشل تحميل الفيديو"
             translated_text = ""
 
     return render_template_string(HTML, original_text=original_text, translated_text=translated_text)
 
+# التشغيل
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
