@@ -1,5 +1,6 @@
-Flask
-yt-dlp
-pydub
-SpeechRecognition
+whisper
+torch
+torchaudio
 deep-translator
+yt-dlp
+flask
