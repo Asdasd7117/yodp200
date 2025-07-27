@@ -1,6 +1,5 @@
-whisper
-torch
-torchaudio
-deep-translator
-yt-dlp
 flask
+yt-dlp
+deep-translator
+openai-whisper
+ffmpeg-python
