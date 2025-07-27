@@ -1,5 +1,4 @@
-Flask
-openai
+flask
 yt-dlp
-deep_translator
-requests
+deep-translator
+openai
