@@ -4,45 +4,55 @@ from pydub import AudioSegment
 import speech_recognition as sr
 from deep_translator import GoogleTranslator
 import os
+import logging
 
 app = Flask(__name__)
 
+# إعداد سجل الأخطاء
+logging.basicConfig(level=logging.INFO)
+
 def download_audio(url):
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': 'downloaded_audio.%(ext)s',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'quiet': True,
-        'no_warnings': True,
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-    return 'downloaded_audio.mp3'
+    try:
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': 'downloaded_audio.%(ext)s',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'quiet': True,
+            'no_warnings': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        return 'downloaded_audio.mp3'
+    except Exception as e:
+        logging.error(f"Download error: {e}")
+        return None
 
 def transcribe_audio(audio_file):
-    recognizer = sr.Recognizer()
-    audio = AudioSegment.from_file(audio_file)
-    audio.export("converted.wav", format="wav")
-
-    with sr.AudioFile("converted.wav") as source:
-        audio_data = recognizer.record(source)
-        try:
+    try:
+        recognizer = sr.Recognizer()
+        audio = AudioSegment.from_file(audio_file)
+        audio.export("converted.wav", format="wav")
+        with sr.AudioFile("converted.wav") as source:
+            audio_data = recognizer.record(source)
             text = recognizer.recognize_google(audio_data)
             return text
-        except sr.UnknownValueError:
-            return "لم يتم التعرف على الكلام"
-        except sr.RequestError:
-            return "حدث خطأ في الاتصال بـ Google"
+    except sr.UnknownValueError:
+        return "لم يتم التعرف على الكلام"
+    except sr.RequestError:
+        return "حدث خطأ في الاتصال بـ Google"
+    except Exception as e:
+        logging.error(f"Transcription error: {e}")
+        return "حدث خطأ أثناء تحويل الصوت إلى نص"
 
 def translate_text(text, lang='ar'):
     try:
-        translated = GoogleTranslator(source='auto', target=lang).translate(text)
-        return translated
+        return GoogleTranslator(source='auto', target=lang).translate(text)
     except Exception as e:
+        logging.error(f"Translation error: {e}")
         return f"خطأ أثناء الترجمة: {str(e)}"
 
 HTML = """
@@ -87,13 +97,20 @@ def index():
         if url:
             try:
                 audio_file = download_audio(url)
-                original_text = transcribe_audio(audio_file)
-                translated_text = translate_text(original_text)
+                if not audio_file:
+                    original_text = "فشل تحميل الفيديو"
+                    translated_text = ""
+                else:
+                    original_text = transcribe_audio(audio_file)
+                    translated_text = translate_text(original_text)
+            except Exception as e:
+                logging.error(f"Main process error: {e}")
+                original_text = "حدث خطأ أثناء المعالجة"
+                translated_text = ""
             finally:
-                if os.path.exists("downloaded_audio.mp3"):
-                    os.remove("downloaded_audio.mp3")
-                if os.path.exists("converted.wav"):
-                    os.remove("converted.wav")
+                for f in ["downloaded_audio.mp3", "converted.wav"]:
+                    if os.path.exists(f):
+                        os.remove(f)
     return render_template_string(HTML, original_text=original_text, translated_text=translated_text)
 
 if __name__ == '__main__':
