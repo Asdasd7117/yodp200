@@ -1,66 +1,57 @@
 from flask import Flask, request, render_template_string
-import yt_dlp
-from pydub import AudioSegment
-import speech_recognition as sr
-from deep_translator import GoogleTranslator
 import os
+import uuid
+import whisper
+from yt_dlp import YoutubeDL
+from deep_translator import GoogleTranslator
 import logging
 
 app = Flask(__name__)
+model = whisper.load_model("base")  # أو "small" أو "medium" أو "large"
 
-# إعداد سجل الأخطاء
 logging.basicConfig(level=logging.INFO)
 
 def download_audio(url):
     try:
+        filename = f"audio_{uuid.uuid4()}.mp3"
         ydl_opts = {
             'format': 'bestaudio/best',
-            'outtmpl': 'downloaded_audio.%(ext)s',
+            'outtmpl': filename,
+            'quiet': True,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-            'quiet': True,
-            'no_warnings': True,
         }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
-        return 'downloaded_audio.mp3'
+        return filename
     except Exception as e:
         logging.error(f"Download error: {e}")
         return None
 
-def transcribe_audio(audio_file):
+def transcribe_audio(filename):
     try:
-        recognizer = sr.Recognizer()
-        audio = AudioSegment.from_file(audio_file)
-        audio.export("converted.wav", format="wav")
-        with sr.AudioFile("converted.wav") as source:
-            audio_data = recognizer.record(source)
-            text = recognizer.recognize_google(audio_data)
-            return text
-    except sr.UnknownValueError:
-        return "لم يتم التعرف على الكلام"
-    except sr.RequestError:
-        return "حدث خطأ في الاتصال بـ Google"
+        result = model.transcribe(filename)
+        return result['text']
     except Exception as e:
         logging.error(f"Transcription error: {e}")
         return "حدث خطأ أثناء تحويل الصوت إلى نص"
 
-def translate_text(text, lang='ar'):
+def translate_text(text, target='ar'):
     try:
-        return GoogleTranslator(source='auto', target=lang).translate(text)
+        return GoogleTranslator(source='auto', target=target).translate(text)
     except Exception as e:
         logging.error(f"Translation error: {e}")
-        return f"خطأ أثناء الترجمة: {str(e)}"
+        return "حدث خطأ أثناء الترجمة"
 
 HTML = """
 <!DOCTYPE html>
 <html lang="ar">
 <head>
     <meta charset="UTF-8" />
-    <title>تحويل فيديو يوتيوب إلى نص وترجمة</title>
+    <title>تحويل صوت فيديو يوتيوب إلى نص وترجمة</title>
     <style>
         body { direction: rtl; font-family: Arial, sans-serif; max-width: 700px; margin: auto; padding: 2em;}
         textarea {width: 100%; height: 150px;}
@@ -70,10 +61,10 @@ HTML = """
     </style>
 </head>
 <body>
-    <h1>تحويل فيديو يوتيوب إلى نص وترجمة</h1>
+    <h1>تحويل صوت فيديو يوتيوب إلى نص وترجمة</h1>
     <form method="post">
-        <label>أدخل رابط فيديو يوتيوب:</label><br>
-        <input type="text" name="url" placeholder="https://www.youtube.com/watch?v=..." required />
+        <label>رابط الفيديو:</label><br>
+        <input type="text" name="url" required placeholder="https://www.youtube.com/watch?v=..." />
         <input type="submit" value="تحويل" />
     </form>
     {% if original_text %}
@@ -88,31 +79,24 @@ HTML = """
 </html>
 """
 
-@app.route('/', methods=['GET', 'POST'])
+@app.route("/", methods=["GET", "POST"])
 def index():
-    original_text = None
-    translated_text = None
-    if request.method == 'POST':
-        url = request.form.get('url')
-        if url:
-            try:
-                audio_file = download_audio(url)
-                if not audio_file:
-                    original_text = "فشل تحميل الفيديو"
-                    translated_text = ""
-                else:
-                    original_text = transcribe_audio(audio_file)
-                    translated_text = translate_text(original_text)
-            except Exception as e:
-                logging.error(f"Main process error: {e}")
-                original_text = "حدث خطأ أثناء المعالجة"
-                translated_text = ""
-            finally:
-                for f in ["downloaded_audio.mp3", "converted.wav"]:
-                    if os.path.exists(f):
-                        os.remove(f)
+    original_text = ""
+    translated_text = ""
+
+    if request.method == "POST":
+        url = request.form.get("url")
+        filename = download_audio(url)
+
+        if filename:
+            original_text = transcribe_audio(filename)
+            translated_text = translate_text(original_text)
+            os.remove(filename)
+        else:
+            original_text = "فشل تحميل الفيديو"
+            translated_text = ""
+
     return render_template_string(HTML, original_text=original_text, translated_text=translated_text)
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
