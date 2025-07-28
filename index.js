@@ -19,7 +19,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// إعداد WebSocket
+// WebSocket
 const wss = new WebSocket.Server({ port: 8080 });
 
 app.use(express.static('public'));
@@ -28,84 +28,12 @@ app.use(express.urlencoded({ extended: true }));
 
 // الواجهة الرئيسية
 app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="ar">
-    <head>
-      <meta charset="UTF-8" />
-      <title>ترجمة صوت يوتيوب</title>
-      <style>
-        body { direction: rtl; font-family: Arial; max-width: 800px; margin: auto; padding: 2em; }
-        textarea { width: 100%; height: 150px; }
-        input[type=text], select, input[type=submit] { width: 100%; padding: 8px; margin: 10px 0; font-size: 16px; }
-        .result { background: #f0f0f0; padding: 1em; margin-top: 1em; border-radius: 6px; }
-        .error { color: red; }
-        .loading { color: blue; font-style: italic; }
-        .video-container { margin-bottom: 1em; }
-      </style>
-    </head>
-    <body>
-      <h1>ترجمة صوت فيديو يوتيوب للعربية</h1>
-      <form id="videoForm">
-        <label>رابط فيديو يوتيوب:</label>
-        <input type="text" name="url" required placeholder="https://www.youtube.com/watch?v=..." />
-        <label>لغة الترجمة:</label>
-        <select name="target_lang">
-          <option value="ar">العربية</option>
-          <option value="en">الإنجليزية</option>
-        </select>
-        <input type="submit" value="تحميل وترجمة" />
-      </form>
-      <div id="video-container" class="video-container"></div>
-      <div id="result" class="result" style="display:none;">
-        <h3>النص المستخرج:</h3>
-        <textarea id="original-text" readonly></textarea>
-        <h3>الترجمة:</h3>
-        <textarea id="translated-text" readonly></textarea>
-      </div>
-      <div id="error" class="error" style="display:none;"></div>
-      <div id="loading" class="loading" style="display:none;">جارٍ معالجة الطلب...</div>
-      <script>
-        const ws = new WebSocket('ws://' + location.hostname + ':8080');
-        ws.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          if (data.videoId) {
-            document.getElementById('video-container').innerHTML = 
-              '<h3>الفيديو:</h3><iframe width="560" height="315" src="https://www.youtube.com/embed/' + data.videoId + '" frameborder="0" allowfullscreen></iframe>';
-          }
-          if (data.originalText) {
-            document.getElementById('original-text').value += data.originalText + '\\n';
-            document.getElementById('result').style.display = 'block';
-          }
-          if (data.translatedText) {
-            document.getElementById('translated-text').value += data.translatedText + '\\n';
-          }
-          if (data.error) {
-            document.getElementById('error').innerText = data.error;
-            document.getElementById('error').style.display = 'block';
-          }
-          document.getElementById('loading').style.display = data.loading ? 'block' : 'none';
-        };
-
-        document.getElementById('videoForm').addEventListener('submit', (e) => {
-          e.preventDefault();
-          const formData = new FormData(e.target);
-          fetch('/translate', {
-            method: 'POST',
-            body: new URLSearchParams(formData),
-          }).catch(err => ws.send(JSON.stringify({ error: 'فشل الاتصال بالخادم' })));
-        });
-      </script>
-    </body>
-    </html>
-  `);
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // نقطة الترجمة
 app.post('/translate', async (req, res) => {
   const { url, target_lang } = req.body;
-  res.json({ loading: true });
-
   if (!url || !url.startsWith('http')) {
     return res.json({ error: 'رابط غير صالح', loading: false });
   }
@@ -115,67 +43,64 @@ app.post('/translate', async (req, res) => {
     return res.json({ error: 'رابط يوتيوب غير صالح', loading: false });
   }
 
-  wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({ videoId, loading: true }));
-    }
-  });
+  res.json({ loading: true });
+
+  broadcast({ videoId, loading: true });
 
   try {
     const audioStream = ytdl(url, { filter: 'audioonly' });
     const chunks = [];
-    audioStream.on('data', (chunk) => chunks.push(chunk));
+
+    audioStream.on('data', chunk => chunks.push(chunk));
     audioStream.on('end', async () => {
       const audioBuffer = Buffer.concat(chunks);
       const audioPath = path.join(__dirname, `audio_${uuidv4()}.mp3`);
       fs.writeFileSync(audioPath, audioBuffer);
 
       const transcription = await transcribeAudio(audioPath);
-      let translation = '';
-      if (transcription) {
-        translation = await translateText(transcription, target_lang);
-      }
+      const translation = transcription ? await translateText(transcription, target_lang) : '';
 
       fs.unlinkSync(audioPath);
 
-      wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({ originalText: transcription, translatedText: translation, loading: false }));
-        }
+      broadcast({
+        originalText: transcription,
+        translatedText: translation,
+        loading: false,
       });
     });
-  } catch (error) {
-    console.error(`[خطأ] ${error.message}`);
-    wss.clients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({ error: 'خطأ داخلي أثناء المعالجة', loading: false }));
-      }
+
+    audioStream.on('error', err => {
+      console.error(`خطأ في تحميل الصوت: ${err.message}`);
+      broadcast({ error: 'فشل تحميل صوت الفيديو', loading: false });
     });
+
+  } catch (err) {
+    console.error(`خطأ أثناء المعالجة: ${err.message}`);
+    broadcast({ error: 'خطأ داخلي أثناء المعالجة', loading: false });
   }
 });
 
-// استخراج معرف الفيديو
+// 🔍 استخراج معرف الفيديو من الرابط
 function getVideoId(url) {
-  const videoIdMatch = url.match(/(?:v=|\\/)([0-9A-Za-z_-]{11})(?:\\?|&|$)/);
-  return videoIdMatch ? videoIdMatch[1] : null;
+  const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+  return match ? match[1] : null;
 }
 
-// تحويل الصوت إلى نص
+// 🗣️ تحويل الصوت إلى نص باستخدام OpenAI
 async function transcribeAudio(audioPath) {
   try {
     const response = await openai.audio.transcriptions.create({
       file: fs.createReadStream(audioPath),
       model: 'whisper-1',
-      language: 'tr', // تركي
     });
     return response.text;
-  } catch (error) {
-    console.error(`[تحويل نصي] خطأ: ${error.message}`);
+  } catch (err) {
+    console.error(`خطأ في تحويل الصوت: ${err.message}`);
     return null;
   }
 }
 
-// الترجمة
+// 🌐 الترجمة باستخدام Google Translate API
 async function translateText(text, target = 'ar') {
   try {
     const response = await axios.post(
@@ -190,17 +115,26 @@ async function translateText(text, target = 'ar') {
       }
     );
     return response.data.data.translations[0].translatedText;
-  } catch (error) {
-    console.error(`[ترجمة] خطأ: ${error.message}`);
+  } catch (err) {
+    console.error(`خطأ في الترجمة: ${err.message}`);
     return text;
   }
 }
 
-// بدء الخادم
+// 📡 إرسال بيانات لجميع المتصلين عبر WebSocket
+function broadcast(data) {
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(data));
+    }
+  });
+}
+
+// 🚀 تشغيل الخادم
 app.listen(port, () => {
-  console.log(`✅ Server running on port ${port}`);
+  console.log(`✅ الخادم يعمل على http://localhost:${port}`);
 });
 
 wss.on('connection', ws => {
-  console.log('🔌 Client connected to WebSocket');
+  console.log('🔌 تم الاتصال بـ WebSocket');
 });
